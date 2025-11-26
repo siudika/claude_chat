@@ -9,12 +9,33 @@ import re
 import uuid
 import requests
 import hashlib
-import streamlit_nested_layout  # type: ignore # imported for side effects
+import streamlit_nested_layout  # imported for side effects
+from cryptography.fernet import Fernet
+
+# --- ENCRYPTION SETUP ---
+
+# Require CLAUDE_CHAT_KEY from environment or .env.
+# This key is never written into the data/ directory.
+_encryption_key = os.environ.get("CLAUDE_CHAT_KEY")
+
+if not _encryption_key:
+    st.error(
+        "CLAUDE_CHAT_KEY not found. Set it in your environment or .env file.\n"
+        "Example (bash): export CLAUDE_CHAT_KEY=$(python -c \"from cryptography.fernet import Fernet; "
+        "print(Fernet.generate_key().decode())\")"
+    )
+    st.stop()
+
+try:
+    cipher_suite = Fernet(_encryption_key)
+except Exception as e:
+    st.error(f"Invalid CLAUDE_CHAT_KEY: {e}")
+    st.stop()
 
 # --- Helpers ---
-
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
 
 def prettify_model_name(model_id: str) -> str:
     """
@@ -308,45 +329,168 @@ def render_message(content: str):
     normalized = normalize_code_snippets(content)
     st.markdown(normalized, unsafe_allow_html=False)
 
-# --- Helpers: threads
+# --- Helpers: threads (encrypted on disk) ---
+
+def _thread_plain_path(name: str) -> Path:
+    """Legacy plaintext JSON path (for backward-compat load only)."""
+    return DATA_DIR / f"{name}.json"
+
+
+def _thread_encrypted_path(name: str) -> Path:
+    """Current encrypted JSON path."""
+    return DATA_DIR / f"{name}.json.enc"
+
+
 def load_threads():
-    files = list(DATA_DIR.glob("*.json"))
-    files = [f for f in files if f.name not in {"project_index.json", "files_index.json", "usage_log.json"}]
-    return sorted(
-        [f.stem for f in files],
-        key=lambda x: (DATA_DIR / f"{x}.json").stat().st_mtime,
-        reverse=True,
-    )
+    """
+    List available threads based on encrypted files first.
+    Falls back to legacy .json files if any still exist.
+    """
+    enc_files = list(DATA_DIR.glob("*.json.enc"))
+    threads: list[str] = [f.stem.replace(".json", "") for f in enc_files]
+
+    # Backward-compat: include old plaintext .json threads not yet migrated
+    plain_files = [
+        f for f in DATA_DIR.glob("*.json")
+        if f.name not in {"project_index.json", "files_index.json", "usage_log.json"}
+    ]
+    for f in plain_files:
+        name = f.stem
+        if name not in threads:
+            threads.append(name)
+
+    # Sort by mtime of whichever file exists (.json.enc preferred)
+    def _mtime(thread_name: str) -> float:
+        enc = _thread_encrypted_path(thread_name)
+        plain = _thread_plain_path(thread_name)
+        if enc.exists():
+            return enc.stat().st_mtime
+        if plain.exists():
+            return plain.stat().st_mtime
+        return 0.0
+
+    return sorted(threads, key=_mtime, reverse=True)
+
 
 def save_thread(name, conv):
-    if conv:
-        with open(DATA_DIR / f"{name}.json", "w") as f:
-            json.dump(conv, f, indent=2)
+    """
+    Encrypt and save a thread to data/{name}.json.enc.
+    Also, if a legacy plaintext {name}.json exists, remove it.
+    """
+    if not conv:
+        return
+
+    try:
+        raw = json.dumps(conv, indent=2).encode("utf-8")
+        token = cipher_suite.encrypt(raw)
+        enc_path = _thread_encrypted_path(name)
+        with open(enc_path, "wb") as f:
+            f.write(token)
+    except Exception as e:
+        st.error(f"Failed to save encrypted thread '{name}': {e}")
+        return
+
+    # Best-effort cleanup of old plaintext file
+    plain_path = _thread_plain_path(name)
+    if plain_path.exists():
+        try:
+            plain_path.unlink()
+        except Exception:
+            pass
+
 
 def load_thread(name):
-    try:
-        with open(DATA_DIR / f"{name}.json", "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
+    """
+    Load a thread, preferring encrypted .json.enc.
+    If decryption fails, show an error and return [].
+    Legacy fallback: if no encrypted file, try plaintext JSON once.
+    """
+    enc_path = _thread_encrypted_path(name)
+    if enc_path.exists():
+        try:
+            with open(enc_path, "rb") as f:
+                token = f.read()
+            raw = cipher_suite.decrypt(token)
+            return json.loads(raw.decode("utf-8"))
+        except Exception as e:
+            st.error(f"Failed to decrypt thread '{name}': {e}")
+            return []
+
+    # Legacy plaintext fallback (for old threads created before encryption)
+    plain_path = _thread_plain_path(name)
+    if plain_path.exists():
+        try:
+            with open(plain_path, "r", encoding="utf-8") as f:
+                conv = json.load(f)
+            # On first successful legacy load, re-save encrypted and delete plaintext
+            save_thread(name, conv)
+            return conv
+        except Exception as e:
+            st.error(f"Failed to load legacy thread '{name}': {e}")
+            return []
+
+    return []
+
 
 def delete_thread(name):
+    """
+    Delete both encrypted and legacy plaintext versions of a thread.
+    """
+    ok = False
+    enc_path = _thread_encrypted_path(name)
+    plain_path = _thread_plain_path(name)
+
+    if enc_path.exists():
+        try:
+            enc_path.unlink()
+            ok = True
+        except Exception:
+            pass
+
+    if plain_path.exists():
+        try:
+            plain_path.unlink()
+            ok = True
+        except Exception:
+            pass
+
+    return ok
+
+
+def rename_thread(old_name: str, new_name: str) -> bool:
+    """
+    Rename encrypted file if present, otherwise legacy plaintext file.
+    """
     try:
-        (DATA_DIR / f"{name}.json").unlink()
-        return True
+        old_enc = _thread_encrypted_path(old_name)
+        new_enc = _thread_encrypted_path(new_name)
+        old_plain = _thread_plain_path(old_name)
+        new_plain = _thread_plain_path(new_name)
+
+        # Prefer encrypted rename
+        if old_enc.exists():
+            if new_enc.exists():
+                return False
+            old_enc.rename(new_enc)
+            # Cleanup any old plaintext version with new name
+            if new_plain.exists():
+                try:
+                    new_plain.unlink()
+                except Exception:
+                    pass
+            return True
+
+        # Fallback: legacy plaintext rename
+        if old_plain.exists():
+            if new_plain.exists():
+                return False
+            old_plain.rename(new_plain)
+            return True
+
+        return False
     except Exception:
         return False
 
-def rename_thread(old_name: str, new_name: str) -> bool:
-    try:
-        old_path = DATA_DIR / f"{old_name}.json"
-        new_path = DATA_DIR / f"{new_name}.json"
-        if old_path.exists() and not new_path.exists():
-            old_path.rename(new_path)
-            return True
-        return False
-    except Exception:
-        return False
 
 def generate_thread_name(message: str | None) -> str:
     base = "Chat"
@@ -395,6 +539,53 @@ def delete_file_from_anthropic(file_id: str):
     }
     resp = requests.delete(f"{API_BASE_URL}/files/{file_id}", headers=headers)
     return resp.status_code
+
+def refresh_files_index_from_anthropic() -> dict:
+    """
+    Fetch files from Anthropic's Files API and merge into local files_index
+    by file_id. Keeps existing metadata (like sha256) when possible.
+    """
+    idx = load_files_index()
+
+    try:
+        # NOTE: Anthropic Python SDK may not expose files.list yet,
+        # so we use raw HTTP as with upload/delete.
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": ANTHROPIC_VERSION,
+            "anthropic-beta": FILES_BETA_HEADER,
+        }
+        resp = requests.get(f"{API_BASE_URL}/files", headers=headers)
+        resp.raise_for_status()
+        payload = resp.json()
+        items = payload.get("data", []) or payload.get("files", [])
+
+        # Merge by file_id; if name known, use that as key, otherwise file_id.
+        for fobj in items:
+            file_id = fobj.get("id")
+            fname = fobj.get("filename") or file_id
+            size = fobj.get("size", 0)
+            key = fname
+
+            existing = idx.get(key, {})
+            existing.update(
+                {
+                    "file_id": file_id,
+                    "size": size,
+                    "size_kb": size / 1024 if size else existing.get("size_kb", 0),
+                    "mime_type": fobj.get("mime_type", existing.get("mime_type", "text/plain")),
+                    "uploaded_at": fobj.get("created_at", existing.get("uploaded_at")),
+                }
+            )
+            idx[key] = existing
+
+        save_files_index(idx)
+        return idx
+    except Exception as e:
+        st.error(f"Failed to refresh Files index from Anthropic: {e}")
+        return idx
+
+
 
 # --- Session state ---
 
@@ -578,6 +769,10 @@ with st.sidebar:
     # --- FILES API SECTION (Collapsed by default) ---
     with st.expander("📁 Files API", expanded=False):
         st.info("ℹ️ Files API supports PDF and text files only. Code files will be uploaded as plain text.")
+        if st.button("🔄 Refresh from Anthropic", use_container_width=True):
+            with st.spinner("Refreshing file list from Anthropic..."):
+                st.session_state.files_index = refresh_files_index_from_anthropic()
+            st.rerun()
 
         # File uploader with multiple file support
         uploaded = st.file_uploader(
@@ -736,22 +931,9 @@ st.markdown("</div>", unsafe_allow_html=True)
 if user_input:
     # Build message content
     full_msg = user_input
+    # Legacy project_index-based intro removed intentionally.
+    # full_msg is now just the raw user_input.
 
-    # Add project context if available
-    index = st.session_state.project_index
-    if index:
-        summaries_text = "\n\n".join(
-            f"### {file_name}\n{meta.get('summary', meta) if isinstance(meta, dict) else meta}"
-            for file_name, meta in list(index.items())[:5]
-        )
-        full_msg = f"""You have previously analyzed these project files:
-
-{summaries_text}
-
-Now answer the following question or request, using those summaries as context:
-
-{user_input}
-"""
 
     # Add Files API context if selected
     if use_files and selected_files:
