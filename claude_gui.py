@@ -11,6 +11,8 @@ import requests
 import hashlib
 import streamlit_nested_layout  # imported for side effects
 from cryptography.fernet import Fernet
+import pyotp  # for TOTP-based login
+
 
 # --- ENCRYPTION SETUP ---
 
@@ -81,6 +83,56 @@ st.set_page_config(
 )
 
 system_prompt = "You are a helpful AI assistant. Be concise, accurate and clear."
+
+# --- TOTP LOGIN GATE ---
+
+def require_totp_login():
+    """
+    Gate the entire app behind a TOTP-based login.
+    Uses CLAUDE_TOTP_SECRET (base32) so you can pair it with an authenticator app.
+    """
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    # If already authenticated in this session, allow app to run.
+    if st.session_state.authenticated:
+        return
+
+    secret = os.environ.get("CLAUDE_TOTP_SECRET")
+    if not secret:
+        st.error(
+            "CLAUDE_TOTP_SECRET not set. Configure it in your environment or .env file "
+            "to enable TOTP login."
+        )
+        st.stop()
+
+    totp = pyotp.TOTP(secret)
+
+    st.title("🔐 Secure Claude Chat")
+    st.write("Enter the 6-digit code from your authenticator app to unlock your data.")
+
+    code = st.text_input("One-time code", type="password", max_chars=8)
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        submit = st.button("Unlock", type="primary", use_container_width=True)
+    with col2:
+        st.caption("Codes rotate every ~30 seconds.")
+
+    if submit:
+        if totp.verify(code, valid_window=1):  # allow slight clock drift
+            st.session_state.authenticated = True
+            st.success("Authenticated. Loading app…")
+            st.experimental_rerun()
+        else:
+            st.error("Invalid or expired code. Please try again.")
+
+    # Stop further rendering until authenticated
+    st.stop()
+
+require_totp_login()
+
+
 
 # Inject Tabler Icons + custom styles
 st.markdown(
