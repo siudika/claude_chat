@@ -13,13 +13,8 @@ import streamlit_nested_layout  # imported for side effects
 from cryptography.fernet import Fernet
 import pyotp  # for TOTP-based login
 
-
 # --- ENCRYPTION SETUP ---
-
-# Require CLAUDE_CHAT_KEY from environment or .env.
-# This key is never written into the data/ directory.
 _encryption_key = os.environ.get("CLAUDE_CHAT_KEY")
-
 if not _encryption_key:
     st.error(
         "CLAUDE_CHAT_KEY not found. Set it in your environment or .env file.\n"
@@ -38,66 +33,56 @@ except Exception as e:
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
-
 def prettify_model_name(model_id: str) -> str:
-    """
-    Convert 'claude-sonnet-4-5-20250929' -> 'Claude Sonnet 4.5 (20250929)'
-    """
+    """Convert 'claude-sonnet-4-5-20250929' -> 'Claude Sonnet 4.5 (20250929)'"""
     parts = model_id.split("-")
     if len(parts) < 3:
         return model_id.title()
-
-    # e.g. ['claude', 'sonnet', '4', '5', '20250929']
-    model_family = parts[1].capitalize()  # Sonnet, Opus, Haiku
-
+    model_family = parts[1].capitalize()
     version_parts = []
     date_part = None
     for p in parts[2:]:
-        if p.isdigit() and len(p) == 8:  # date
+        if p.isdigit() and len(p) == 8:
             date_part = p
         else:
             version_parts.append(p)
-
     version_str = ".".join(version_parts) if version_parts else ""
-
     if date_part:
         return f"Claude {model_family} {version_str} ({date_part})"
     else:
         return f"Claude {model_family} {version_str}".strip()
 
 # --- Basic setup ---
-
 load_dotenv()
-
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
-
 PROJECT_INDEX_PATH = DATA_DIR / "project_index.json"
 FILES_INDEX_PATH = DATA_DIR / "files_index.json"
 USAGE_LOG_PATH = DATA_DIR / "usage_log.json"
 
+# Mobile-first: centered layout, collapsed sidebar
 st.set_page_config(
     page_title="Claude Chat",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    layout="centered",  # Better for mobile
+    initial_sidebar_state="collapsed",  # Hide sidebar on mobile by default
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': "Secure Claude Chat with TOTP & Encryption"
+    }
 )
 
 system_prompt = "You are a helpful AI assistant. Be concise, accurate and clear."
 
 # --- TOTP LOGIN GATE ---
-
 def require_totp_login():
-    """
-    Gate the entire app behind a TOTP-based login.
-    Uses CLAUDE_TOTP_SECRET (base32) so you can pair it with an authenticator app.
-    """
+    """Gate the entire app behind a TOTP-based login."""
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
-
-    # If already authenticated in this session, allow app to run.
+    
     if st.session_state.authenticated:
         return
-
+    
     secret = os.environ.get("CLAUDE_TOTP_SECRET")
     if not secret:
         st.error(
@@ -105,75 +90,165 @@ def require_totp_login():
             "to enable TOTP login."
         )
         st.stop()
-
+    
     totp = pyotp.TOTP(secret)
-
-    st.title("🔐 Secure Claude Chat")
-    st.write("Enter the 6-digit code from your authenticator app to unlock your data.")
-
-    code = st.text_input("One-time code", type="password", max_chars=8)
-
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        submit = st.button("Unlock", type="primary", use_container_width=True)
-    with col2:
-        st.caption("Codes rotate every ~30 seconds.")
-
-    if submit:
-        if totp.verify(code, valid_window=1):  # allow slight clock drift
+    
+    # Mobile-friendly login screen
+    st.markdown("""
+        <style>
+        .login-container {
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 2rem 1rem;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="login-container">', unsafe_allow_html=True)
+    st.title("🔐 Claude Chat")
+    st.write("Enter your authenticator code to continue")
+    
+    code = st.text_input("6-digit code", type="password", max_chars=8, key="totp_code")
+    
+    if st.button("🔓 Unlock", type="primary", use_container_width=True, key="unlock_btn"):
+        if totp.verify(code, valid_window=1):
             st.session_state.authenticated = True
-            st.success("Authenticated. Loading app…")
-            st.experimental_rerun()
+            st.success("✓ Authenticated")
+            st.rerun()
         else:
-            st.error("Invalid or expired code. Please try again.")
-
-    # Stop further rendering until authenticated
+            st.error("❌ Invalid code")
+    
+    st.caption("💡 Codes refresh every 30 seconds")
+    st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
 require_totp_login()
 
-
-
-# Inject Tabler Icons + custom styles
-st.markdown(
-    """
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
-    <style>
-    .ti { font-size: 1.0rem; }
-    /* Sticky bottom container - completely fixed to bottom */
+# --- MOBILE-RESPONSIVE STYLES ---
+st.markdown("""
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+<style>
+    /* Mobile-first typography */
+    @media (max-width: 768px) {
+        .stApp {
+            padding-bottom: 180px !important;
+        }
+        
+        /* Hide sidebar toggle on very small screens */
+        [data-testid="collapsedControl"] {
+            top: 0.5rem;
+            left: 0.5rem;
+        }
+        
+        /* Compact header */
+        h1 {
+            font-size: 1.5rem !important;
+            margin: 0.5rem 0 !important;
+        }
+        
+        /* Full-width chat messages */
+        [data-testid="stChatMessageContainer"] {
+            max-width: 100% !important;
+            padding: 0.5rem !important;
+        }
+        
+        /* Larger touch targets */
+        button {
+            min-height: 44px !important;
+            font-size: 1rem !important;
+        }
+        
+        /* Better input sizing */
+        input, textarea, select {
+            font-size: 16px !important; /* Prevents zoom on iOS */
+            min-height: 44px !important;
+        }
+        
+        /* Thread list compact */
+        .sidebar-content {
+            padding: 0.5rem !important;
+        }
+    }
+    
+    /* Sticky bottom container - mobile optimized */
     .sticky-bottom {
         position: fixed;
         bottom: 0;
         left: 0;
         right: 0;
-        background: #0e1117;
-        padding: 1rem;
+        background: var(--background-color);
+        padding: 0.75rem;
         z-index: 999;
-        border-top: 1px solid #333;
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-end;
-        max-height: 200px;
+        border-top: 1px solid var(--border-color);
+        box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
     }
-    /* Main content padding to avoid overlap */
-    .main > div {
-        padding-bottom: 220px !important;
+    
+    @media (min-width: 769px) {
+        .sticky-bottom {
+            max-width: 730px;
+            margin: 0 auto;
+        }
+        .stApp {
+            padding-bottom: 200px !important;
+        }
     }
-    /* Thread list item hover effect */
-    .thread-item-container:hover .thread-actions {
-        opacity: 1;
+    
+    /* Chat input */
+    [data-testid="stChatInput"] {
+        border-radius: 24px !important;
     }
-    .thread-actions {
-        opacity: 0;
-        transition: opacity 0.2s;
+    
+    /* Icon sizing */
+    .ti {
+        font-size: 1.2rem;
     }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+    
+    /* Thread item hover */
+    .thread-item:hover {
+        background: var(--hover-color);
+        cursor: pointer;
+    }
+    
+    /* Code blocks */
+    .code-block {
+        margin: 12px 0;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.1);
+    }
+    
+    .code-header {
+        background: var(--secondary-background-color);
+        padding: 8px 12px;
+        font-size: 0.75rem;
+    }
+    
+    pre {
+        margin: 0 !important;
+        padding: 12px !important;
+        overflow-x: auto !important;
+        background: var(--code-background) !important;
+    }
+    
+    /* Mobile: hide less important elements */
+    @media (max-width: 768px) {
+        .hide-on-mobile {
+            display: none !important;
+        }
+        
+        /* Compact metrics */
+        [data-testid="stMetric"] {
+            padding: 0.5rem !important;
+        }
+        
+        [data-testid="stMetricLabel"] {
+            font-size: 0.75rem !important;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- Anthropic client ---
-
 api_key = os.environ.get("ANTHROPIC_API_KEY")
 if not api_key:
     st.error("ANTHROPIC_API_KEY not found")
@@ -205,7 +280,6 @@ def fetch_models():
 AVAILABLE_MODELS = fetch_models()
 
 # --- Helpers: local indexes ---
-
 def load_project_index() -> dict:
     if PROJECT_INDEX_PATH.exists():
         try:
@@ -250,7 +324,6 @@ def record_usage(model: str, input_tokens: int, output_tokens: int):
     input_cost = (input_tokens / 1_000_000) * prices["input"]
     output_cost = (output_tokens / 1_000_000) * prices["output"]
     total_cost = input_cost + output_cost
-
     entry = {
         "ts": datetime.utcnow().isoformat(),
         "model": model,
@@ -260,7 +333,6 @@ def record_usage(model: str, input_tokens: int, output_tokens: int):
         "output_cost": output_cost,
         "total_cost": total_cost,
     }
-
     log = load_usage_log()
     log.append(entry)
     save_usage_log(log)
@@ -270,13 +342,10 @@ def summarize_usage_last_24h():
     log = load_usage_log()
     if not log:
         return None
-
     now = datetime.utcnow()
     cutoff = now - timedelta(hours=24)
-
     total_input = total_output = 0
     total_cost = 0.0
-
     for entry in log:
         try:
             ts = datetime.fromisoformat(entry["ts"])
@@ -287,7 +356,6 @@ def summarize_usage_last_24h():
         total_input += entry.get("input_tokens", 0)
         total_output += entry.get("output_tokens", 0)
         total_cost += entry.get("total_cost", 0.0)
-
     return {
         "input_tokens": total_input,
         "output_tokens": total_output,
@@ -295,17 +363,9 @@ def summarize_usage_last_24h():
     }
 
 # --- Helpers: code snippets ---
-
 def normalize_code_snippets(content: str) -> str:
-    """
-    Convert various XML code formats to markdown:
-    - <code_snippet language="...">...</code_snippet>
-    - <code_change> blocks with <before>/<after>
-    - Preserve <file>, <operation>, <description> as metadata
-    """
-    
-    # Pattern 1: Handle <code_change> blocks with before/after
-    code_change_pattern = r'<code_change>\s*<file>(.*?)</file>\s*<operation>(.*?)</operation>\s*<description>(.*?)</description>\s*<before>(.*?)</before>\s*<after>(.*?)</after>\s*</code_change>'
+    """Convert various XML code formats to markdown"""
+    code_change_pattern = r'de_change>\s*<file>(.*?)</file>\s*<operation>(.*?)</operation>\s*<description>(.*?)</description>\s*<before>(.*?)</before>\s*<after>(.*?)</after>\s*</code_change>'
     
     def repl_code_change(match: re.Match) -> str:
         file = match.group(1).strip()
@@ -314,7 +374,6 @@ def normalize_code_snippets(content: str) -> str:
         before_code = match.group(4).strip()
         after_code = match.group(5).strip()
         
-        # Detect language from file extension
         lang = ""
         if "." in file:
             ext = file.split(".")[-1].lower()
@@ -331,11 +390,11 @@ def normalize_code_snippets(content: str) -> str:
         
         result = f"""
 📝 {operation.title()}: {file}
-
 **Description:** {description}
 
 **Before:**
 {before_code}
+
 **After:**
 {after_code}
 """
@@ -343,16 +402,15 @@ def normalize_code_snippets(content: str) -> str:
     
     content = re.sub(code_change_pattern, repl_code_change, content, flags=re.DOTALL)
     
-    # Pattern 2: Handle standalone <before>/<after> blocks
     before_after_pattern = r'<before>(.*?)</before>\s*<after>(.*?)</after>'
     
     def repl_before_after(match: re.Match) -> str:
         before_code = match.group(1).strip()
         after_code = match.group(2).strip()
-        
         result = f"""
 **Before:**
 {before_code}
+
 **After:**
 {after_code}
 """
@@ -360,8 +418,7 @@ def normalize_code_snippets(content: str) -> str:
     
     content = re.sub(before_after_pattern, repl_before_after, content, flags=re.DOTALL)
     
-    # Pattern 3: Handle standard <code_snippet> tags
-    code_snippet_pattern = r'<code_snippet(?:\s+language="([^"]*)")?\s*>([\s\S]*?)</code_snippet>'
+    code_snippet_pattern = r'de_snippet(?:\s+language="([^"]*)")?>([\\s\\S]*?)</code_snippet>'
     
     def repl_code_snippet(match: re.Match) -> str:
         lang = match.group(1) or ""
@@ -370,38 +427,28 @@ def normalize_code_snippets(content: str) -> str:
     
     content = re.sub(code_snippet_pattern, repl_code_snippet, content)
     
-    # Pattern 4: Clean up remaining standalone XML tags
     metadata_tags = ['file', 'operation', 'description']
     for tag in metadata_tags:
         content = re.sub(f'<{tag}>(.*?)</{tag}>', r'**\1**', content, flags=re.DOTALL)
     
     return content
+
 def render_message(content: str):
     """Render a message with normalized code blocks"""
     normalized = normalize_code_snippets(content)
     st.markdown(normalized, unsafe_allow_html=False)
 
 # --- Helpers: threads (encrypted on disk) ---
-
 def _thread_plain_path(name: str) -> Path:
-    """Legacy plaintext JSON path (for backward-compat load only)."""
     return DATA_DIR / f"{name}.json"
 
-
 def _thread_encrypted_path(name: str) -> Path:
-    """Current encrypted JSON path."""
     return DATA_DIR / f"{name}.json.enc"
 
-
 def load_threads():
-    """
-    List available threads based on encrypted files first.
-    Falls back to legacy .json files if any still exist.
-    """
     enc_files = list(DATA_DIR.glob("*.json.enc"))
     threads: list[str] = [f.stem.replace(".json", "") for f in enc_files]
-
-    # Backward-compat: include old plaintext .json threads not yet migrated
+    
     plain_files = [
         f for f in DATA_DIR.glob("*.json")
         if f.name not in {"project_index.json", "files_index.json", "usage_log.json"}
@@ -410,8 +457,7 @@ def load_threads():
         name = f.stem
         if name not in threads:
             threads.append(name)
-
-    # Sort by mtime of whichever file exists (.json.enc preferred)
+    
     def _mtime(thread_name: str) -> float:
         enc = _thread_encrypted_path(thread_name)
         plain = _thread_plain_path(thread_name)
@@ -420,18 +466,12 @@ def load_threads():
         if plain.exists():
             return plain.stat().st_mtime
         return 0.0
-
+    
     return sorted(threads, key=_mtime, reverse=True)
 
-
 def save_thread(name, conv):
-    """
-    Encrypt and save a thread to data/{name}.json.enc.
-    Also, if a legacy plaintext {name}.json exists, remove it.
-    """
     if not conv:
         return
-
     try:
         raw = json.dumps(conv, indent=2).encode("utf-8")
         token = cipher_suite.encrypt(raw)
@@ -441,8 +481,7 @@ def save_thread(name, conv):
     except Exception as e:
         st.error(f"Failed to save encrypted thread '{name}': {e}")
         return
-
-    # Best-effort cleanup of old plaintext file
+    
     plain_path = _thread_plain_path(name)
     if plain_path.exists():
         try:
@@ -450,13 +489,7 @@ def save_thread(name, conv):
         except Exception:
             pass
 
-
 def load_thread(name):
-    """
-    Load a thread, preferring encrypted .json.enc.
-    If decryption fails, show an error and return [].
-    Legacy fallback: if no encrypted file, try plaintext JSON once.
-    """
     enc_path = _thread_encrypted_path(name)
     if enc_path.exists():
         try:
@@ -467,82 +500,68 @@ def load_thread(name):
         except Exception as e:
             st.error(f"Failed to decrypt thread '{name}': {e}")
             return []
-
-    # Legacy plaintext fallback (for old threads created before encryption)
+    
     plain_path = _thread_plain_path(name)
     if plain_path.exists():
         try:
             with open(plain_path, "r", encoding="utf-8") as f:
                 conv = json.load(f)
-            # On first successful legacy load, re-save encrypted and delete plaintext
             save_thread(name, conv)
             return conv
         except Exception as e:
             st.error(f"Failed to load legacy thread '{name}': {e}")
             return []
-
+    
     return []
 
-
 def delete_thread(name):
-    """
-    Delete both encrypted and legacy plaintext versions of a thread.
-    """
     ok = False
     enc_path = _thread_encrypted_path(name)
     plain_path = _thread_plain_path(name)
-
+    
     if enc_path.exists():
         try:
             enc_path.unlink()
             ok = True
         except Exception:
             pass
-
+    
     if plain_path.exists():
         try:
             plain_path.unlink()
             ok = True
         except Exception:
             pass
-
+    
     return ok
 
-
 def rename_thread(old_name: str, new_name: str) -> bool:
-    """
-    Rename encrypted file if present, otherwise legacy plaintext file.
-    """
     try:
         old_enc = _thread_encrypted_path(old_name)
         new_enc = _thread_encrypted_path(new_name)
         old_plain = _thread_plain_path(old_name)
         new_plain = _thread_plain_path(new_name)
-
-        # Prefer encrypted rename
+        
         if old_enc.exists():
             if new_enc.exists():
                 return False
             old_enc.rename(new_enc)
-            # Cleanup any old plaintext version with new name
             if new_plain.exists():
                 try:
                     new_plain.unlink()
                 except Exception:
                     pass
             return True
-
-        # Fallback: legacy plaintext rename
+        
         if old_plain.exists():
             if new_plain.exists():
                 return False
             old_plain.rename(new_plain)
             return True
-
+        
         return False
     except Exception:
         return False
-
 
 def generate_thread_name(message: str | None) -> str:
     base = "Chat"
@@ -554,13 +573,7 @@ def generate_thread_name(message: str | None) -> str:
     return f"{base} [{suffix}]"
 
 # --- Helpers: Files API ---
-
 def upload_file_to_anthropic(file_name: str, file_bytes: bytes, mime_type: str = "text/plain") -> str:
-    """
-    Upload file to Anthropic Files API.
-    Note: Only PDF and text/plain are supported. Convert all text-based files to text/plain.
-    """
-    # Map various text MIME types to text/plain (only supported text format)
     if mime_type and mime_type.startswith("text/"):
         mime_type = "text/plain"
     elif mime_type == "application/json":
@@ -568,9 +581,8 @@ def upload_file_to_anthropic(file_name: str, file_bytes: bytes, mime_type: str =
     elif mime_type == "application/xml":
         mime_type = "text/plain"
     elif mime_type not in ["application/pdf", "text/plain"]:
-        # Default to text/plain for any unsupported type
         mime_type = "text/plain"
-
+    
     headers = {
         "x-api-key": api_key,
         "anthropic-version": ANTHROPIC_VERSION,
@@ -593,15 +605,8 @@ def delete_file_from_anthropic(file_id: str):
     return resp.status_code
 
 def refresh_files_index_from_anthropic() -> dict:
-    """
-    Fetch files from Anthropic's Files API and merge into local files_index
-    by file_id. Keeps existing metadata (like sha256) when possible.
-    """
     idx = load_files_index()
-
     try:
-        # NOTE: Anthropic Python SDK may not expose files.list yet,
-        # so we use raw HTTP as with upload/delete.
         headers = {
             "x-api-key": api_key,
             "anthropic-version": ANTHROPIC_VERSION,
@@ -611,36 +616,30 @@ def refresh_files_index_from_anthropic() -> dict:
         resp.raise_for_status()
         payload = resp.json()
         items = payload.get("data", []) or payload.get("files", [])
-
-        # Merge by file_id; if name known, use that as key, otherwise file_id.
+        
         for fobj in items:
             file_id = fobj.get("id")
             fname = fobj.get("filename") or file_id
             size = fobj.get("size", 0)
             key = fname
-
+            
             existing = idx.get(key, {})
-            existing.update(
-                {
-                    "file_id": file_id,
-                    "size": size,
-                    "size_kb": size / 1024 if size else existing.get("size_kb", 0),
-                    "mime_type": fobj.get("mime_type", existing.get("mime_type", "text/plain")),
-                    "uploaded_at": fobj.get("created_at", existing.get("uploaded_at")),
-                }
-            )
+            existing.update({
+                "file_id": file_id,
+                "size": size,
+                "size_kb": size / 1024 if size else existing.get("size_kb", 0),
+                "mime_type": fobj.get("mime_type", existing.get("mime_type", "text/plain")),
+                "uploaded_at": fobj.get("created_at", existing.get("uploaded_at")),
+            })
             idx[key] = existing
-
+        
         save_files_index(idx)
         return idx
     except Exception as e:
         st.error(f"Failed to refresh Files index from Anthropic: {e}")
         return idx
 
-
-
 # --- Session state ---
-
 if "model" not in st.session_state:
     st.session_state.model = AVAILABLE_MODELS[0]
 
@@ -674,23 +673,21 @@ if "last_usage" not in st.session_state:
 if "usage_summary_24h" not in st.session_state:
     st.session_state.usage_summary_24h = summarize_usage_last_24h()
 
-# Thread editing state
 if "editing_thread" not in st.session_state:
     st.session_state.editing_thread = None
 
 if "editing_thread_text" not in st.session_state:
     st.session_state.editing_thread_text = ""
 
-# --- SIDEBAR ---
-
+# --- MOBILE-OPTIMIZED SIDEBAR ---
 with st.sidebar:
     # Top metric: current chat name
     if st.session_state.thread:
         st.metric(label="Current Chat", value=st.session_state.thread)
     else:
-        st.metric(label="Current Chat", value="New Chat")
-
-    # Model selector with prettified names
+        st.caption("📌 New Chat")
+    
+    # Model selector
     model_options = AVAILABLE_MODELS
     model_labels = {m: prettify_model_name(m) for m in model_options}
     selected_label = st.selectbox(
@@ -699,33 +696,32 @@ with st.sidebar:
         index=[model_labels[m] for m in model_options].index(model_labels[st.session_state.model]),
         key="model_select_sidebar",
     )
-    # reverse lookup
+    
     for m_id, lbl in model_labels.items():
         if lbl == selected_label:
             st.session_state.model = m_id
             break
-
+    
     if st.button("➕ New Chat", use_container_width=True, type="primary"):
         st.session_state.thread = None
         st.session_state.conversation = []
         st.session_state.files = []
         st.session_state.editing_thread = None
         st.rerun()
-
+    
     st.markdown("---")
-    st.markdown("### Chats")
-
+    st.markdown("### 💬 Chats")
+    
     threads = load_threads()
     if not threads:
         st.caption("No chats yet")
     else:
-        for thread in threads:
-            # Check if this thread is being edited
+        # Mobile-friendly: show only 5 most recent, rest in expander
+        for i, thread in enumerate(threads[:5]):
             is_editing = st.session_state.editing_thread == thread
             active = st.session_state.thread == thread
-
+            
             if is_editing:
-                # Edit mode: show input and confirm/cancel buttons
                 col1, col2, col3 = st.columns([3, 1, 1])
                 with col1:
                     new_name = st.text_input(
@@ -740,21 +736,20 @@ with st.sidebar:
                             if rename_thread(thread, new_name):
                                 if st.session_state.thread == thread:
                                     st.session_state.thread = new_name
-                        st.session_state.editing_thread = None
-                        st.rerun()
+                                st.session_state.editing_thread = None
+                                st.rerun()
                 with col3:
                     if st.button("✕", key=f"cancel_{thread}", help="Cancel", use_container_width=True):
                         st.session_state.editing_thread = None
                         st.rerun()
             else:
-                # Normal mode: left-aligned title with hover buttons
                 col1, col2, col3 = st.columns([3, 0.5, 0.5])
-
                 with col1:
-                    # Left-aligned button
                     icon = "✓ " if active else ""
+                    # Truncate long names on mobile
+                    display_name = thread if len(thread) < 25 else thread[:22] + "..."
                     if st.button(
-                        f"{icon}{thread}",
+                        f"{icon}{display_name}",
                         key=f"thread_{thread}",
                         use_container_width=True,
                         type="primary" if active else "tertiary",
@@ -764,15 +759,13 @@ with st.sidebar:
                         st.session_state.files = []
                         st.session_state.editing_thread = None
                         st.rerun()
-
-                # Show edit/delete buttons in columns 2 and 3
-                # Note: CSS hover effects are handled by the injected styles
+                
                 with col2:
                     if st.button("✎", key=f"edit_{thread}", help="Edit", use_container_width=True):
                         st.session_state.editing_thread = thread
                         st.session_state.editing_thread_text = thread
                         st.rerun()
-
+                
                 with col3:
                     if st.button("🗑", key=f"delete_{thread}", help="Delete", use_container_width=True):
                         if delete_thread(thread):
@@ -780,72 +773,53 @@ with st.sidebar:
                                 st.session_state.thread = None
                                 st.session_state.conversation = []
                             st.rerun()
-
+        
+        # Older threads in expander
+        if len(threads) > 5:
+            with st.expander(f"📚 {len(threads) - 5} more chats"):
+                for thread in threads[5:]:
+                    if st.button(thread, key=f"old_{thread}", use_container_width=True, type="tertiary"):
+                        st.session_state.thread = thread
+                        st.session_state.conversation = load_thread(thread)
+                        st.rerun()
+    
     st.markdown("---")
-
-    # --- USAGE & COST (Collapsed by default) ---
-    with st.expander("📊 Usage & Cost (24h)", expanded=False):
+    
+    # Usage & Cost (collapsed)
+    with st.expander("📊 Usage (24h)"):
         usage = summarize_usage_last_24h()
         if usage:
-            total_tokens = usage['input_tokens'] + usage['output_tokens']
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Input Tokens", f"{usage['input_tokens']:,}")
-            with col2:
-                st.metric("Output Tokens", f"{usage['output_tokens']:,}")
-            with col3:
-                st.metric(
-                    "Total Cost",
-                    f"${usage['total_cost']:.4f}",
-                    delta=f"{total_tokens:,} tokens",
-                    delta_color="off"
-                )
+            st.metric("Cost", f"${usage['total_cost']:.4f}")
+            st.caption(f"{usage['input_tokens']:,} in / {usage['output_tokens']:,} out")
         else:
-            st.caption("No usage data in last 24 hours")
-
-        # Show recent requests
-        log = load_usage_log()
-        if log:
-            st.markdown("**Recent requests:**")
-            recent = log[-5:][::-1]  # Last 5, reversed
-            for entry in recent:
-                st.caption(
-                    f"• {prettify_model_name(entry['model'])}: "
-                    f"{entry['input_tokens']:,} in / {entry['output_tokens']:,} out "
-                    f"(${entry['total_cost']:.4f})"
-                )
-
-    st.markdown("---")
-
-    # --- FILES API SECTION (Collapsed by default) ---
-    with st.expander("📁 Files API", expanded=False):
-        st.info("ℹ️ Files API supports PDF and text files only. Code files will be uploaded as plain text.")
-        if st.button("🔄 Refresh from Anthropic", use_container_width=True):
-            with st.spinner("Refreshing file list from Anthropic..."):
+            st.caption("No usage data")
+    
+    # Files API (collapsed)
+    with st.expander("📁 Files API"):
+        st.caption("PDF and text files only")
+        
+        if st.button("🔄 Refresh", use_container_width=True, key="refresh_files"):
+            with st.spinner("Syncing..."):
                 st.session_state.files_index = refresh_files_index_from_anthropic()
             st.rerun()
-
-        # File uploader with multiple file support
+        
         uploaded = st.file_uploader(
-            "Upload files to Files API",
+            "Upload",
             type=["pdf", "txt", "md", "json", "py", "js", "html", "css", "csv", "xml", "yaml", "yml"],
             accept_multiple_files=True,
             key="files_api_uploader",
-            help="Upload files to Anthropic's Files API for document analysis (uploaded as PDF or text/plain)"
+            label_visibility="collapsed"
         )
-
-        # Process uploaded files
+        
         if uploaded:
             for file in uploaded:
                 file_bytes = file.read()
                 file_hash = sha256_bytes(file_bytes)
                 idx = st.session_state.files_index
-
-                # Check if file already uploaded (by name)
+                
                 if file.name not in idx:
                     try:
-                        with st.spinner(f"Uploading {file.name}..."):
+                        with st.spinner(f"⬆️ {file.name}"):
                             file_id = upload_file_to_anthropic(file.name, file_bytes, file.type or "text/plain")
                             idx[file.name] = {
                                 "file_id": file_id,
@@ -857,90 +831,76 @@ with st.sidebar:
                             }
                             save_files_index(idx)
                             st.session_state.files_index = idx
-                            st.success(f"✓ Uploaded {file.name}")
+                            st.success(f"✓ {file.name}")
                     except Exception as e:
-                        st.error(f"Upload failed for {file.name}: {e}")
+                        st.error(f"❌ {file.name}")
                 else:
-                    st.info(f"✓ {file.name} already uploaded")
-
-        st.markdown("---")
-        st.markdown("**Uploaded Files:**")
-
+                    st.info(f"✓ {file.name} exists")
+        
         idx = st.session_state.files_index
-        if not idx:
-            st.caption("No Files API uploads yet.")
-        else:
-            for file_name, meta in list(idx.items()):
-                file_id = meta.get("file_id", "")
-                size_kb = meta.get("size_kb", meta.get("size", 0) / 1024)
-
-                col1, col2, col3 = st.columns([3, 1, 1])
+        if idx:
+            st.caption(f"**{len(idx)} files:**")
+            for file_name, meta in list(idx.items())[:3]:  # Show max 3
+                size_kb = meta.get("size_kb", 0)
+                col1, col2 = st.columns([3, 1])
                 with col1:
-                    st.caption(f"📄 {file_name}")
-                    st.caption(f"Size: {size_kb:.1f} KB")
+                    st.caption(f"📄 {file_name[:20]}...")
                 with col2:
-                    if st.button("📌", key=f"attach_{file_name}", help="Attach to chat", use_container_width=True):
-                        if file_name not in st.session_state.files:
-                            st.session_state.files.append(file_name)
-                        st.rerun()
-                with col3:
-                    if st.button("🗑", key=f"del_file_{file_name}", help="Delete", use_container_width=True):
+                    if st.button("🗑", key=f"del_{file_name}", help="Delete", use_container_width=True):
                         try:
-                            delete_file_from_anthropic(file_id)
+                            delete_file_from_anthropic(meta.get("file_id", ""))
                             del idx[file_name]
                             save_files_index(idx)
                             st.session_state.files_index = idx
-                            if file_name in st.session_state.files:
-                                st.session_state.files.remove(file_name)
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Delete failed: {e}")
+                        except Exception:
+                            st.error("Delete failed")
 
-# --- MAIN CONTENT AREA ---
+# --- MAIN CONTENT (Mobile-optimized) ---
 
-# Title & current thread display
+# Compact header
 col1, col2 = st.columns([3, 1])
 with col1:
-    st.title("💬 Claude Chat")
+    st.title("💬 Claude")
 with col2:
     if st.session_state.thread:
-        st.caption(f"Thread: **{st.session_state.thread}**")
-
-st.markdown("---")
+        # Thread dropdown for quick switching (mobile)
+        threads = load_threads()
+        if threads:
+            thread_short = st.session_state.thread[:15] + "..." if len(st.session_state.thread) > 15 else st.session_state.thread
+            selected_thread = st.selectbox(
+                "Thread",
+                options=threads,
+                index=threads.index(st.session_state.thread) if st.session_state.thread in threads else 0,
+                key="thread_quick_switch",
+                label_visibility="collapsed"
+            )
+            if selected_thread != st.session_state.thread:
+                st.session_state.thread = selected_thread
+                st.session_state.conversation = load_thread(selected_thread)
+                st.rerun()
 
 # Conversation history
 if st.session_state.conversation:
     for msg in st.session_state.conversation:
         role = msg.get("role", "user")
         content = msg.get("content", "")
-        avatar = "🧑" if role == "user" else "🤖"
+        avatar = "👤" if role == "user" else "🤖"
         with st.chat_message(role, avatar=avatar):
             render_message(content)
 
-# Attached Files API documents display
-if st.session_state.files:
-    st.markdown("---")
-    st.markdown("**📎 Attached Files:**")
-    idx = st.session_state.files_index
-    for file_name in st.session_state.files:
-        # file_name is now the key in files_index
-        if file_name in idx:
-            meta = idx[file_name]
-            file_size = meta.get("size", 0)
-            st.caption(f"📄 {file_name} ({file_size:,} bytes)")
+# Spacer for sticky bottom
+st.markdown('<div style="height: 180px;"></div>', unsafe_allow_html=True)
 
-# Add spacer to ensure content doesn't overlap with sticky bottom
-st.markdown("<div style='height: 220px;'></div>", unsafe_allow_html=True)
-
-# --- STICKY BOTTOM: Chat Input + Files API Checkbox ---
+# --- STICKY BOTTOM (Mobile-optimized) ---
 st.markdown('<div class="sticky-bottom">', unsafe_allow_html=True)
 
-# Files API checkbox and controls (at top of sticky section)
+# Files API checkbox (compact on mobile)
 use_files = st.checkbox(
-    "📎 Use Files API documents",
+    "📎 Files",
     value=False,
     key="use_files_main",
-    help="Include attached Files API documents as context.",
+    help="Attach files as context",
 )
 
 selected_files = []
@@ -951,19 +911,22 @@ if use_files:
     if idx:
         file_names = list(idx.keys())
         selected_files = st.multiselect(
-            "Select files:",
+            "Files",
             options=file_names,
             default=[],
             key="files_api_selected",
+            label_visibility="collapsed"
         )
-
+        
         if selected_files:
             action_pill = st.pills(
-                "Action:",
+                "Action",
                 options=["🔍 Analyze", "✏️ Edit", "📝 Summarize"],
                 default="🔍 Analyze",
                 key="files_action_pills",
+                label_visibility="collapsed"
             )
+            
             action_map = {
                 "🔍 Analyze": "analyze",
                 "✏️ Edit": "edit",
@@ -972,55 +935,41 @@ if use_files:
             st.session_state.files_action = action_map.get(action_pill, "analyze")
             selected_action = st.session_state.files_action
     else:
-        st.caption("ℹ No Files API uploads yet. Upload in sidebar.")
+        st.caption("No files uploaded")
 
-# Chat input (always at bottom)
-user_input = st.chat_input("Message Claude...", key="chat_input_main")
+# Chat input
+user_input = st.chat_input("Message...", key="chat_input_main")
 
-st.markdown("</div>", unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 # --- MESSAGE PROCESSING ---
 if user_input:
-    # Build message content
     full_msg = user_input
-    # Legacy project_index-based intro removed intentionally.
-    # full_msg is now just the raw user_input.
-
-
-    # Add Files API context if selected
+    
     if use_files and selected_files:
         action_text = {
             "analyze": "Analyze the selected files and answer the question.",
             "edit": "Propose code changes to the selected files as requested.",
             "summarize": "Summarize the selected files at a high level.",
         }[selected_action]
-        full_msg = f"""{action_text}
-
-Question: {user_input}
-"""
-
-    # Auto-generate thread name if needed
+        full_msg = f"{action_text}\n\nQuestion: {user_input}"
+    
     if not st.session_state.thread:
         st.session_state.thread = generate_thread_name(user_input)
-
-    # Add user message to conversation
+    
     st.session_state.conversation.append({
         "role": "user",
         "content": full_msg,
     })
-
-    # Build content blocks
+    
     content_blocks = [{"type": "text", "text": full_msg}]
-
-    # Add Files API documents if selected
+    
     if use_files and selected_files:
         idx = st.session_state.files_index
         for file_name in selected_files:
-            # The filename IS the key in files_index
             if file_name in idx:
                 meta = idx[file_name]
                 file_id = meta.get("file_id", "")
-
                 if file_id:
                     content_blocks.append({
                         "type": "document",
@@ -1031,29 +980,26 @@ Question: {user_input}
                         "title": f"{file_name} ({selected_action})",
                         "context": f"User selected action: {selected_action} on this file.",
                     })
-                    
-    # Build API messages
+    
     api_messages = []
     for msg in st.session_state.conversation[:-1]:
         api_messages.append({
             "role": msg["role"],
             "content": [{"type": "text", "text": msg["content"]}],
         })
+    
     api_messages.append({
         "role": "user",
         "content": content_blocks,
     })
-
-    # API request
+    
     try:
-        with st.spinner("Claude is thinking..."):
+        with st.spinner("💭 Thinking..."):
             extra_headers = {}
             if use_files and selected_files:
                 extra_headers["anthropic-beta"] = FILES_BETA_HEADER
-
-            # Trim to last 30 messages
+            
             trimmed_messages = api_messages[-30:]
-
             response = client.messages.create(
                 model=st.session_state.model,
                 max_tokens=4096,
@@ -1061,33 +1007,28 @@ Question: {user_input}
                 messages=trimmed_messages,
                 extra_headers=extra_headers if extra_headers else None,
             )
-
-            # Extract assistant response
+            
             assistant_message = response.content[0].text if response.content else ""
-
-            # Record usage
+            
             usage_entry = record_usage(
                 model=st.session_state.model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
             )
+            
             st.session_state.last_usage = usage_entry
             st.session_state.usage_summary_24h = summarize_usage_last_24h()
-
-            # Add assistant response to conversation
+            
             st.session_state.conversation.append({
                 "role": "assistant",
                 "content": assistant_message,
             })
-
-            # Save thread
+            
             save_thread(st.session_state.thread, st.session_state.conversation)
-
             st.rerun()
-
+            
     except (APIConnectionError, APIStatusError, AuthenticationError, RateLimitError) as e:
         st.error(f"API Error: {e}")
-        # Remove last user message on error
         if st.session_state.conversation and st.session_state.conversation[-1]["role"] == "user":
             st.session_state.conversation.pop()
     except Exception as e:
