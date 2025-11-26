@@ -1,4 +1,9 @@
-/claude_gui-encryption.py
-/venv
-/data
 .env
+data/
+.streamlit/secrets.toml
+__pycache__/
+venv/
+run.sh
+icon.png
+claude_cli.py
+claude_gui-encryption.py

@@ -1,0 +1,7 @@
+streamlit
+anthropic
+python-dotenv
+cryptography
+requests
+pyotp
+streamlit-nested-layout
