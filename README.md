@@ -46,7 +46,7 @@ A sophisticated, locally-hosted Streamlit application for Claude API with **end-
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/claude-chat.git
+git clone https://github.com/siudika/claude_chat.git
 cd claude-chat
 ```
 
