@@ -16,7 +16,7 @@ A Streamlit web app for Anthropic's Claude API with encrypted storage and TOTP a
 
 ```
 
-git clone https://github.com/yourusername/claude-chat.git
+git clone https://github.com/siudika/claude_chat.git
 cd claude-chat
 pip install -r requirements.txt
 
