@@ -22,15 +22,15 @@ A clean, secure chat interface for use with Anthropic API keys.
 ## 🚀 Quick Start
 
 ### 1. Clone & Install
-
+```
 git clone https://github.com/siudika/claude_chat.git
 cd claude_chat
 pip install -r requirements.txt
-
+```
 ### 2. Run the App
-
+```
 streamlit run claude_gui.py
-
+```
 The app will open at [http://localhost:8501](http://localhost:8501)
 
 ### 3. First Launch Setup
