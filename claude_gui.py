@@ -15,15 +15,183 @@ import pyotp  # for TOTP-based login
 from streamlit_option_menu import option_menu
 from streamlit_extras.bottom_container import bottom
 
+# Add this function right after the imports (around line 50)
+# Replace the top section (after imports, around line 50) with this:
 
-# --- ENCRYPTION SETUP ---
+def show_simple_login():
+    """Display simple one-step login screen"""
+    st.set_page_config(
+        page_title="Claude Chat - Setup",
+        layout="centered",
+        initial_sidebar_state="collapsed",
+    )
+
+    st.markdown("""
+    <style>
+    .login-container {
+        max-width: 500px;
+        margin: 3rem auto;
+        padding: 2rem;
+        border-radius: 16px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    }
+    .login-card {
+        background: #0e1117;
+        padding: 2.5rem;
+        border-radius: 12px;
+        color: white;
+    }
+    .login-card h1 {
+        margin-top: 0;
+        color: #667eea;
+        text-align: center;
+        margin-bottom: 0.5rem;
+    }
+    .login-card p {
+        text-align: center;
+        color: #aaa;
+        margin-bottom: 2rem;
+    }
+    .info-box {
+        background: rgba(102, 126, 234, 0.1);
+        border-left: 4px solid #667eea;
+        padding: 1rem;
+        border-radius: 4px;
+        margin: 1rem 0;
+        font-size: 0.9rem;
+        color: #ccc;
+    }
+    .success-box {
+        background: rgba(76, 175, 80, 0.1);
+        border-left: 4px solid #4caf50;
+        padding: 1rem;
+        border-radius: 4px;
+        margin: 1rem 0;
+        font-size: 0.9rem;
+        color: #ccc;
+    }
+    .console-link {
+        display: inline-block;
+        padding: 0.75rem 1.5rem;
+        background: #667eea;
+        color: white;
+        text-decoration: none;
+        border-radius: 8px;
+        font-weight: bold;
+        transition: all 0.3s ease;
+        text-align: center;
+        width: 100%;
+        margin: 1rem 0;
+    }
+    .console-link:hover {
+        background: #764ba2;
+        text-decoration: none;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="login-container"><div class="login-card">', unsafe_allow_html=True)
+
+    st.markdown("# 🤖 Claude Chat")
+    st.markdown("**Get started in 30 seconds**")
+
+    st.markdown("""
+    <div class="info-box">
+    👋 Welcome! Enter your Anthropic API key below to get started.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Step 1: Get API key
+    st.markdown("### Step 1: Get Your API Key")
+    st.markdown("Go to the Anthropic Console to create your API key:")
+
+    st.markdown("""
+    <a href="https://console.anthropic.com/account/keys" target="_blank" class="console-link">
+        🔑 Open Anthropic Console
+    </a>
+    """, unsafe_allow_html=True)
+
+    st.markdown("### Step 2: Paste Your API Key")
+
+    api_key_input = st.text_input(
+        "API Key",
+        type="password",
+        placeholder="sk-ant-api03-...",
+        help="Your API key starts with 'sk-ant-'",
+        label_visibility="collapsed"
+    )
+
+    if api_key_input:
+        # Validate format
+        if not api_key_input.startswith("sk-ant-"):
+            st.error("❌ Invalid format. API key should start with 'sk-ant-'")
+        else:
+            st.success("✓ Valid API key format")
+
+            # Generate encryption key automatically
+            from cryptography.fernet import Fernet
+            encryption_key = Fernet.generate_key().decode()
+
+            st.markdown("""
+            <div class="success-box">
+            ✅ <strong>Ready to setup!</strong><br>
+            Your encryption key has been generated automatically.
+            </div>
+            """, unsafe_allow_html=True)
+
+            if st.button("🚀 Create .env & Launch", type="primary", use_container_width=True, key="launch_btn"):
+                # Create .env file
+                env_content = f"""# Anthropic API Configuration
+ANTHROPIC_API_KEY={api_key_input}
+
+# Encryption Key (for conversation storage)
+CLAUDE_CHAT_KEY={encryption_key}
+"""
+
+                try:
+                    env_path = Path(".env")
+                    env_path.write_text(env_content)
+
+                    st.success("✅ .env file created successfully!")
+                    st.info("🔄 Reloading app... Please wait.")
+
+                    # Reload environment variables
+                    import time
+                    time.sleep(1)
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Failed to create .env file: {e}")
+
+    st.markdown("""
+    <div class="info-box">
+    ℹ️ <strong>Your .env file is private</strong><br>
+    It's stored locally on your computer and will never be shared.
+    It's in .gitignore so it won't be committed to git.
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('</div></div>', unsafe_allow_html=True)
+    st.stop()
+
+
+def check_env_setup() -> bool:
+    """Check if .env has required API key and encryption key"""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    encryption_key = os.environ.get("CLAUDE_CHAT_KEY")
+    return bool(api_key) and bool(encryption_key)
+# --- Load environment ---
+load_dotenv()
+
+# --- Check if setup is needed ---
+if not check_env_setup():
+    show_simple_login()
+
+# --- Encryption setup ---
 _encryption_key = os.environ.get("CLAUDE_CHAT_KEY")
 if not _encryption_key:
-    st.error(
-        "CLAUDE_CHAT_KEY not found. Set it in your environment or .env file.\n"
-        "Example (bash): export CLAUDE_CHAT_KEY=$(python -c \"from cryptography.fernet import Fernet; "
-        "print(Fernet.generate_key().decode())\")"
-    )
+    st.error("CLAUDE_CHAT_KEY not found in .env")
     st.stop()
 
 try:
@@ -31,7 +199,6 @@ try:
 except Exception as e:
     st.error(f"Invalid CLAUDE_CHAT_KEY: {e}")
     st.stop()
-
 # --- Helpers ---
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -212,15 +379,15 @@ st.markdown("""
 # --- Anthropic client ---
 api_key = os.environ.get("ANTHROPIC_API_KEY")
 if not api_key:
-    st.error("ANTHROPIC_API_KEY not found")
-    st.stop()
+    show_simple_login()
 
 try:
     client = Anthropic(api_key=api_key)
 except Exception as e:
     st.error(f"Failed to initialize Anthropic client: {e}")
-    st.stop()
+    show_simple_login()
 
+    
 FILES_BETA_HEADER = "files-api-2025-04-14"
 ANTHROPIC_VERSION = "2023-06-01"
 API_BASE_URL = "https://api.anthropic.com/v1"
